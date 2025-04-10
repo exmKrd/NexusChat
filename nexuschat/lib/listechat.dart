@@ -225,7 +225,10 @@ class Listechatstate extends State<Listechat> {
                         itemBuilder: (context, index) {
                           final conv = conversations[index];
                           final destinataire =
-                              conv["user2_username"] ?? "Utilisateur inconnu";
+                              conv["user1_username"] == expediteur
+                                  ? conv["user2_username"]
+                                  : conv["user1_username"];
+
                           final rawId = conv["id"]?.toString();
                           final uniqueTag = rawId != null
                               ? "conversation_${expediteur}_$rawId"

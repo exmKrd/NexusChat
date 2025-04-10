@@ -120,6 +120,34 @@ class _ContactsState extends State<Contacts>
   }
 
   Future<void> _envoyerDemandeContact(String destinataire) async {
+    if (destinataire == currentUser) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Vous ne pouvez pas vous ajouter vous-même")),
+      );
+      return;
+    }
+
+    final dejaContact =
+        _contacts.any((contact) => contact['contacts'] == destinataire);
+    final demandeExistante =
+        _demandes.any((demande) => demande['from'] == destinataire);
+
+    if (dejaContact) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("$destinataire est déjà dans vos contacts")),
+      );
+      return;
+    }
+
+    if (demandeExistante) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text("Une demande est déjà en attente pour $destinataire")),
+      );
+      return;
+    }
+
     try {
       final response = await http.post(
         Uri.parse("https://nexuschat.derickexm.be/contacts/demande_contact"),
@@ -130,6 +158,7 @@ class _ContactsState extends State<Contacts>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Demande envoyée à $destinataire")),
         );
+        await _loadDemandes();
       }
     } catch (e) {
       print("Erreur : $e");
@@ -170,6 +199,19 @@ class _ContactsState extends State<Contacts>
       }
     } catch (e) {
       print("Erreur : $e");
+    }
+  }
+
+  Future<String> _getEtatRelation(String target) async {
+    final response = await http.get(
+      Uri.parse(
+          "https://nexuschat.derickexm.be/contacts/etat_relation?owner=$currentUser&target=$target"),
+    );
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return data['etat'];
+    } else {
+      return "erreur";
     }
   }
 
@@ -261,15 +303,47 @@ class _ContactsState extends State<Contacts>
                         itemBuilder: (context, index) {
                           final user = _filteredUsers[index]['username'];
                           if (user == currentUser) return SizedBox();
-                          return Card(
-                            child: ListTile(
-                              title: Text(user),
-                              leading: Icon(Icons.person_outline),
-                              trailing: ElevatedButton(
-                                onPressed: () => _envoyerDemandeContact(user),
-                                child: Text("Envoyer demande"),
-                              ),
-                            ),
+
+                          return FutureBuilder<String>(
+                            future: _getEtatRelation(user),
+                            builder: (context, snapshot) {
+                              String? etat = snapshot.data;
+
+                              if (!snapshot.hasData) {
+                                return ListTile(
+                                  title: Text(user),
+                                  subtitle: Text("Chargement..."),
+                                );
+                              }
+
+                              String label = "";
+                              VoidCallback? action;
+
+                              if (etat == "aucune_relation") {
+                                label = "Envoyer demande";
+                                action = () => _envoyerDemandeContact(user);
+                              } else if (etat == "pending_envoyee" ||
+                                  etat == "pending_recue") {
+                                label = "Demande en attente";
+                                action = null;
+                              } else if (etat == "ami") {
+                                return SizedBox(); // cacher les amis
+                              } else {
+                                label = "Erreur";
+                                action = null;
+                              }
+
+                              return Card(
+                                child: ListTile(
+                                  title: Text(user),
+                                  leading: Icon(Icons.person_outline),
+                                  trailing: ElevatedButton(
+                                    onPressed: action,
+                                    child: Text(label),
+                                  ),
+                                ),
+                              );
+                            },
                           );
                         },
                       ),
