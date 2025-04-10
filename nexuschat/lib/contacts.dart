@@ -1,0 +1,283 @@
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+
+import 'package:nexuschat/chat.dart';
+import 'package:nexuschat/profil.dart';
+
+class Contacts extends StatefulWidget {
+  @override
+  _ContactsState createState() => _ContactsState();
+}
+
+class _ContactsState extends State<Contacts>
+    with SingleTickerProviderStateMixin {
+  List<dynamic> _contacts = [];
+  List<dynamic> _demandes = [];
+  List<dynamic> _users = [];
+  List<dynamic> _filteredUsers = [];
+  TextEditingController _searchController = TextEditingController();
+
+  String? _userEmail;
+  String? currentUser;
+  late TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+    _initUser();
+  }
+
+  Future<void> _initUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    _userEmail = prefs.getString('user_email') ?? '';
+    try {
+      final response = await http.get(
+        Uri.parse(
+            'https://nexuschat.derickexm.be/users/get_username/?email=$_userEmail'),
+        headers: {'Accept': 'application/json'},
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        currentUser = data['username'];
+
+        await _loadContacts();
+        await _loadDemandes();
+        await _loadAllUsers();
+        _searchController.addListener(_filterUsers);
+
+        setState(() {});
+      } else {
+        print("Erreur : utilisateur introuvable");
+      }
+    } catch (e) {
+      print("Erreur récupération username : $e");
+    }
+  }
+
+  Future<void> _loadContacts() async {
+    if (currentUser == null) return;
+    try {
+      final response = await http.get(
+        Uri.parse(
+            'https://nexuschat.derickexm.be/contacts/mes_contacts?owner=$currentUser'),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() => _contacts = data);
+      } else {
+        print("Erreur chargement contacts: ${response.statusCode}");
+      }
+    } catch (e) {
+      print("Erreur : $e");
+    }
+  }
+
+  Future<void> _loadDemandes() async {
+    if (currentUser == null) return;
+    try {
+      final response = await http.get(
+        Uri.parse(
+            'https://nexuschat.derickexm.be/contacts/mes_demandes?owner=$currentUser'),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() => _demandes = data);
+      } else {
+        print("Erreur chargement demandes: ${response.statusCode}");
+      }
+    } catch (e) {
+      print("Erreur : $e");
+    }
+  }
+
+  Future<void> _loadAllUsers() async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://nexuschat.derickexm.be/users/get_users?username='),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() {
+          _users = data['users'];
+          _filteredUsers = _users;
+        });
+      }
+    } catch (e) {
+      print("Erreur : $e");
+    }
+  }
+
+  void _filterUsers() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filteredUsers = _users
+          .where((user) => user['username'].toLowerCase().contains(query))
+          .toList();
+    });
+  }
+
+  Future<void> _envoyerDemandeContact(String destinataire) async {
+    try {
+      final response = await http.post(
+        Uri.parse("https://nexuschat.derickexm.be/contacts/demande_contact"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"owner": destinataire, "sender": currentUser}),
+      );
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Demande envoyée à $destinataire")),
+        );
+      }
+    } catch (e) {
+      print("Erreur : $e");
+    }
+  }
+
+  Future<void> _accepterDemande(String sender) async {
+    try {
+      final response = await http.post(
+        Uri.parse('https://nexuschat.derickexm.be/contacts/accepter_demande'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"owner": currentUser, "sender": sender}),
+      );
+      if (response.statusCode == 200) {
+        await _loadContacts();
+        await _loadDemandes();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Demande de $sender acceptée")),
+        );
+      }
+    } catch (e) {
+      print("Erreur : $e");
+    }
+  }
+
+  Future<void> _refuserDemande(String sender) async {
+    try {
+      final response = await http.post(
+        Uri.parse('https://nexuschat.derickexm.be/contacts/refuser_demande'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"owner": currentUser, "sender": sender}),
+      );
+      if (response.statusCode == 200) {
+        await _loadDemandes();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Demande de $sender refusée")),
+        );
+      }
+    } catch (e) {
+      print("Erreur : $e");
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Mes contacts"),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: [
+            Tab(text: "Contacts"),
+            Tab(text: "Demandes"),
+            Tab(text: "Rechercher"),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _contacts.isEmpty
+              ? Center(child: Text("Aucun contact"))
+              : ListView.builder(
+                  itemCount: _contacts.length,
+                  itemBuilder: (context, index) {
+                    final user = _contacts[index]['contacts'];
+                    return Card(
+                      child: ListTile(
+                        title: Text(user),
+                        leading: Icon(Icons.person),
+                        trailing: ElevatedButton(
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  ChatScreen(usernameExpediteur: user),
+                            ),
+                          ),
+                          child: Text("Chat"),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+          _demandes.isEmpty
+              ? Center(child: Text("Aucune demande"))
+              : ListView.builder(
+                  itemCount: _demandes.length,
+                  itemBuilder: (context, index) {
+                    final demande = _demandes[index]['from'];
+                    return Card(
+                      child: ListTile(
+                        title: Text("Demande de $demande"),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: Icon(Icons.check, color: Colors.green),
+                              onPressed: () => _accepterDemande(demande),
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.close, color: Colors.red),
+                              onPressed: () => _refuserDemande(demande),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+          Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    labelText: "Rechercher un utilisateur...",
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: _filteredUsers.isEmpty
+                    ? Center(child: Text("Aucun utilisateur trouvé"))
+                    : ListView.builder(
+                        itemCount: _filteredUsers.length,
+                        itemBuilder: (context, index) {
+                          final user = _filteredUsers[index]['username'];
+                          if (user == currentUser) return SizedBox();
+                          return Card(
+                            child: ListTile(
+                              title: Text(user),
+                              leading: Icon(Icons.person_outline),
+                              trailing: ElevatedButton(
+                                onPressed: () => _envoyerDemandeContact(user),
+                                child: Text("Envoyer demande"),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
