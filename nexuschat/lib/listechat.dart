@@ -99,17 +99,15 @@ class Listechatstate extends State<Listechat> {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        if (data is Map<String, dynamic> && data.containsKey("conversations")) {
-          return List<Map<String, dynamic>>.from(data["conversations"]);
-        } else {
-          setState(() {
-            errorMessage = "Format de réponse inattendu";
-          });
-          return [];
+        if (data is Map<String, dynamic>) {
+          if (data.containsKey("conversations")) {
+            return List<Map<String, dynamic>>.from(data["conversations"]);
+          } else if (data.containsKey("exists") && data["exists"] == false) {
+            return [];
+          }
         }
-      } else {
         setState(() {
-          errorMessage = "Erreur serveur: ${response.statusCode}";
+          errorMessage = "Format de réponse inattendu";
         });
         return [];
       }
@@ -120,6 +118,9 @@ class Listechatstate extends State<Listechat> {
       });
       return [];
     }
+
+    // ✅ Ce return évite l'erreur "body might complete normally"
+    return [];
   }
 
   Future<void> _refreshConversations() async {
@@ -146,6 +147,7 @@ class Listechatstate extends State<Listechat> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: const Text("Mes Conversations"),
         actions: [
           IconButton(
@@ -200,9 +202,21 @@ class Listechatstate extends State<Listechat> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Text("Aucune conversation trouvée"),
+                              const Icon(Icons.chat_bubble_outline,
+                                  size: 80, color: Colors.grey),
                               const SizedBox(height: 20),
-                              ElevatedButton(
+                              const Text(
+                                "Aucune conversation pour l’instant",
+                                style: TextStyle(
+                                    fontSize: 18, fontWeight: FontWeight.w500),
+                              ),
+                              const SizedBox(height: 10),
+                              const Text(
+                                "Commencez une discussion avec vos contacts.",
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                              const SizedBox(height: 20),
+                              ElevatedButton.icon(
                                 onPressed: () {
                                   Navigator.push(
                                     context,
@@ -211,7 +225,8 @@ class Listechatstate extends State<Listechat> {
                                     ),
                                   );
                                 },
-                                child: const Text("Démarrer une conversation"),
+                                icon: const Icon(Icons.add_comment),
+                                label: const Text("Démarrer une conversation"),
                               ),
                             ],
                           ),
@@ -233,13 +248,6 @@ class Listechatstate extends State<Listechat> {
                           final uniqueTag = rawId != null
                               ? "conversation_${expediteur}_$rawId"
                               : "conversation_${expediteur}_${destinataire}_$index";
-
-                          final lastMessage =
-                              conv["last_message"] ?? "Aucun message";
-                          final timestamp = conv["created_at"] ?? "Inconnu";
-                          final formattedDate = formatTimestamp(timestamp);
-                          final truncatedMessage =
-                              truncateMessage(lastMessage, 40);
 
                           return Hero(
                             tag: uniqueTag,
@@ -263,19 +271,20 @@ class Listechatstate extends State<Listechat> {
                                   style: const TextStyle(
                                       fontWeight: FontWeight.bold),
                                 ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(truncatedMessage),
-                                    Text(
-                                      formattedDate,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[600],
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                //
+                                // subtitle: Column(
+                                //   crossAxisAlignment: CrossAxisAlignment.start,
+                                //   children: [
+                                //     Text(truncatedMessage),
+                                //     Text(
+                                //       formattedDate,
+                                //       style: TextStyle(
+                                //         fontSize: 12,
+                                //         color: Colors.grey[600],
+                                //       ),
+                                //     ),
+                                //   ],
+                                // ),
                                 onTap: () {
                                   Navigator.push(
                                     context,

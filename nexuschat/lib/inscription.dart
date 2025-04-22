@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
-import 'package:nexuschat/listechat.dart';
 import 'package:nexuschat/login.dart';
 
 class Inscription extends StatelessWidget {
@@ -13,31 +12,31 @@ class Inscription extends StatelessWidget {
   final TextEditingController username = TextEditingController();
 
   Future<void> sendVerificationEmail(BuildContext context, String email) async {
-    final url = Uri.parse('https://nexuschat.derickexm.be/email/send_email/');
+    final url = Uri.parse(
+        'https://nexuschat.derickexm.be/email/send_email?email=$email');
     try {
       final response = await http.post(
         url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "email": email,
-        }),
+        headers: {'Accept': 'application/json'},
       );
 
       if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Email de vérification envoyé avec succès!")),
-        );
+        _showSnackBar(context, "Email de vérification envoyé avec succès!");
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text("Impossible d'envoyer l'email de vérification.")),
-        );
+        _showSnackBar(context,
+            "Impossible d'envoyer l'email de vérification. (${response.statusCode})");
+        print("Réponse serveur : ${response.body}");
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Erreur de connexion à l'API: $e")),
-      );
+      _showSnackBar(context, "Erreur de connexion à l'API.");
+      print("Erreur d'envoi email : $e");
     }
+  }
+
+  void _showSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   Future<void> _API_inscription(BuildContext context) async {
@@ -56,29 +55,20 @@ class Inscription extends StatelessWidget {
 
       if (response.statusCode == 200) {
         print("Inscription réussie !");
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Inscription réussie !")),
-        );
+        _showSnackBar(context, "Inscription réussie !");
+        sendVerificationEmail(context, email.text);
 
-        // Appel de la fonction pour envoyer l'email de confirmation
-        await sendVerificationEmail(context, email.text);
-
-        // Redirection vers la page de login
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => Login()),
         );
       } else {
         print("Erreur : ${response.body}");
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Erreur lors de l'inscription")),
-        );
+        _showSnackBar(context, "Erreur lors de l'inscription");
       }
     } catch (e) {
       print("Erreur réseau : $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Problème de connexion au serveur")),
-      );
+      _showSnackBar(context, "Problème de connexion au serveur");
     }
   }
 
@@ -106,8 +96,6 @@ class Inscription extends StatelessWidget {
                   const Text("S'inscrire sur NexusChat",
                       style: TextStyle(fontSize: 24)),
                   const SizedBox(height: 20),
-
-                  // Champ Nom d'utilisateur
                   SizedBox(
                     width: 400,
                     child: TextField(
@@ -121,8 +109,6 @@ class Inscription extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 20),
-
-                  // Champ Email
                   SizedBox(
                     width: 400,
                     child: TextField(
@@ -136,8 +122,6 @@ class Inscription extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 20),
-
-                  // Champ Mot de passe
                   SizedBox(
                     width: 400,
                     child: TextField(
@@ -151,15 +135,11 @@ class Inscription extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 30),
-
-                  // Bouton S'inscrire
                   ElevatedButton(
                     onPressed: () => _API_inscription(context),
                     child: const Text("S'inscrire"),
                   ),
                   const SizedBox(height: 20),
-
-                  // Bouton Déjà inscrit ?
                   ElevatedButton(
                     onPressed: () {
                       Navigator.push(context,

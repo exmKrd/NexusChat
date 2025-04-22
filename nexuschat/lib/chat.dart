@@ -1,7 +1,6 @@
-// ✅ chat.dart (corrigé sans ChatApp)
-
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,6 +16,9 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final FocusNode _focusNode = FocusNode();
+
   List<Map<String, String>> messages = [];
   String? expediteur;
   late String destinataire;
@@ -45,6 +47,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _pollingTimer.cancel();
     _controller.removeListener(_updateButtonState);
     _controller.dispose();
+    _focusNode.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -144,12 +148,14 @@ class _ChatScreenState extends State<ChatScreen> {
             messages = messagesList.map((msg) {
               bool isMe = msg['expediteur'].toString() == expediteur;
               return {
-                'sender': isMe ? 'me' : 'bot',
+                'sender': msg['expediteur'].toString(),
                 'text': msg['messages'].toString(),
+                'timestamp': msg['sent_at'].toString(),
               };
             }).toList();
             _isInitialLoading = false;
           });
+          _scrollToBottom();
         }
       }
     } catch (e) {
@@ -183,16 +189,26 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _updateButtonState() {
     setState(() {
-      _isButtonEnabled = _controller.text.isNotEmpty;
+      _isButtonEnabled = _controller.text.trim().isNotEmpty;
     });
   }
 
   Future<void> sendMessage(String message) async {
+    if (expediteur == null || message.trim().isEmpty) return;
+
+    final now = DateTime.now();
+
     setState(() {
-      messages.add({'sender': 'me', 'text': message});
+      messages.add({
+        'sender': expediteur!,
+        'text': message.trim(),
+        'timestamp': now.toIso8601String(),
+      });
     });
     _controller.clear();
     _updateButtonState();
+    _scrollToBottom();
+
     try {
       final response = await http.post(
         Uri.parse('https://nexuschat.derickexm.be/messages/send_message/'),
@@ -200,8 +216,8 @@ class _ChatScreenState extends State<ChatScreen> {
         body: jsonEncode({
           'expediteur': expediteur,
           'destinataire': destinataire,
-          'message': message,
-          'timestamp': DateTime.now().toIso8601String(),
+          'message': message.trim(),
+          'sent_at': now.toIso8601String(),
           'id_conversation': idConversation,
         }),
       );
@@ -209,13 +225,38 @@ class _ChatScreenState extends State<ChatScreen> {
         final jsonResponse = jsonDecode(response.body);
         if (jsonResponse.containsKey('reply')) {
           setState(() {
-            messages.add({'sender': 'bot', 'text': jsonResponse['reply']});
+            messages.add({
+              'sender': destinataire,
+              'text': jsonResponse['reply'],
+              'timestamp': DateTime.now().toIso8601String(),
+            });
           });
+          _scrollToBottom();
         }
       }
     } catch (e) {
       print('Erreur sendMessage: $e');
     }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _selectPhoto() {
+    print('Sélectionner une photo');
+  }
+
+  void _selectGif() {
+    print('Sélectionner un GIF');
   }
 
   @override
@@ -236,27 +277,61 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 Expanded(
                   child: ListView.builder(
+                    controller: _scrollController,
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
                       final message = messages[index];
-                      final isMe = message['sender'] == 'me';
-                      return Align(
+                      final isMe = message['sender'] == expediteur;
+
+                      // Formatage de l'heure
+                      final time =
+                          DateTime.tryParse(message['timestamp'] ?? '');
+                      final formattedTime = time != null
+                          ? "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}"
+                          : '';
+
+                      return Container(
                         alignment:
                             isMe ? Alignment.centerRight : Alignment.centerLeft,
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(
-                              vertical: 5, horizontal: 10),
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: isMe ? Colors.orange : Colors.grey[300],
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            message['text']!,
-                            style: TextStyle(
-                              color: isMe ? Colors.white : Colors.black,
+                        margin: const EdgeInsets.symmetric(
+                            vertical: 4, horizontal: 8),
+                        child: Column(
+                          crossAxisAlignment: isMe
+                              ? CrossAxisAlignment.end
+                              : CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              message['sender'] ?? '',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                              ),
                             ),
-                          ),
+                            Container(
+                              margin: const EdgeInsets.only(top: 2),
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: isMe ? Colors.orange : Colors.grey[300],
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                message['text'] ?? '',
+                                style: TextStyle(
+                                  color: isMe ? Colors.white : Colors.black,
+                                ),
+                              ),
+                            ),
+                            if (formattedTime.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  formattedTime,
+                                  style: TextStyle(
+                                      fontSize: 10, color: Colors.grey[600]),
+                                ),
+                              ),
+                          ],
                         ),
                       );
                     },
@@ -269,24 +344,73 @@ class _ChatScreenState extends State<ChatScreen> {
                       Expanded(
                         child: TextField(
                           controller: _controller,
-                          decoration: const InputDecoration(
-                            hintText: 'Écrire un message...',
+                          focusNode: _focusNode,
+                          style: TextStyle(fontSize: 16),
+                          cursorColor: Colors.orange,
+                          decoration: InputDecoration(
+                            hintText: 'Entrez votre message...',
                             border: OutlineInputBorder(),
                           ),
+                          minLines: 1,
+                          maxLines: 5,
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: TextInputAction.newline,
+                          onChanged: (text) => _updateButtonState(),
+                          onEditingComplete: () {},
+                          inputFormatters: [
+                            _EnterKeyFormatter(
+                              onEnter: () {
+                                if (_controller.text.trim().isNotEmpty) {
+                                  sendMessage(_controller.text);
+                                  _controller
+                                      .clear(); // 👈 Ajout explicite du clear ici
+                                }
+                              },
+                            ),
+                          ],
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.send),
-                        onPressed: _isButtonEnabled
-                            ? () => sendMessage(_controller.text)
-                            : null,
-                        color: _isButtonEnabled ? Colors.orange : Colors.grey,
+                      SizedBox(width: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.orange,
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          icon: Icon(Icons.send, color: Colors.black),
+                          onPressed: _isButtonEnabled
+                              ? () => sendMessage(_controller.text)
+                              : null,
+                        ),
                       ),
+                      SizedBox(width: 8),
                     ],
                   ),
                 ),
               ],
             ),
     );
+  }
+}
+
+// ✅ Formatter : Enter = envoi / Shift+Enter = saut de ligne
+class _EnterKeyFormatter extends TextInputFormatter {
+  final VoidCallback onEnter;
+
+  _EnterKeyFormatter({required this.onEnter});
+
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    if (newValue.text.length > oldValue.text.length &&
+        newValue.text.endsWith('\n') &&
+        !RawKeyboard.instance.keysPressed
+            .contains(LogicalKeyboardKey.shiftLeft) &&
+        !RawKeyboard.instance.keysPressed
+            .contains(LogicalKeyboardKey.shiftRight)) {
+      onEnter();
+      return const TextEditingValue(text: ''); // vide le champ après envoi
+    }
+    return newValue;
   }
 }

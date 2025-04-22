@@ -14,12 +14,14 @@ class _MenuState extends State<Menu> {
   int _selectedIndex = 0;
   String? _userDisplayName;
   String? _profilePictureURL;
+  bool showEmailWarning = true;
 
   static late List<Widget> _widgetOptions;
 
   @override
   void initState() {
     super.initState();
+
     _widgetOptions = <Widget>[
       Listechat(),
       Setting(),
@@ -91,6 +93,28 @@ class _MenuState extends State<Menu> {
         padding: const EdgeInsets.fromLTRB(15, 10, 10, 10),
         child: Column(
           children: [
+            if (showEmailWarning)
+              Container(
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: Colors.amber[200],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: const [
+                    Icon(Icons.warning_amber_rounded, color: Colors.black),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        " Les emails de vérification sont momentanément indisponibles. Veuillez nous en excuser !",
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600, color: Colors.red),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Expanded(
               child: Center(
                 child: _widgetOptions.elementAt(_selectedIndex),

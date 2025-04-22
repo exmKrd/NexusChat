@@ -36,6 +36,27 @@ class Login extends StatelessWidget {
       );
     }
 
+    Future<void> sendAttemptLogin(String email) async {
+      final url = Uri.parse(
+          'https://nexuschat.derickexm.be/email/send_login_attempt_email/?email=$email');
+
+      try {
+        final response = await http.post(
+          url,
+          headers: {'Content-Type': 'application/json'},
+        );
+
+        if (response.statusCode != 200) {
+          print(
+              "Erreur lors de l'envoi de l'alerte de tentative de connexion : ${response.body}");
+        } else {
+          print("Alerte de tentative de connexion envoyée à $email");
+        }
+      } catch (e) {
+        print("Erreur de connexion lors de l'envoi de l'alerte : $e");
+      }
+    }
+
     Future<void> checkCredentials(String email, String password) async {
       final url =
           Uri.parse('https://nexuschat.derickexm.be/users/check_credentials');
@@ -63,6 +84,7 @@ class Login extends StatelessWidget {
 
           Navigator.pushReplacement(
               context, MaterialPageRoute(builder: (context) => Menu()));
+          await sendAttemptLogin(email);
         } else {
           _showErrorDialog(
               context, "Nom d'utilisateur ou mot de passe incorrect");

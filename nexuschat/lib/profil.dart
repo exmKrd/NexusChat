@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:nexuschat/login.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 late SharedPreferences prefs;
@@ -109,6 +110,7 @@ class _ProfilState extends State<Profil> {
         final data = jsonDecode(response.body);
         setState(() {
           _username = data['username'];
+          prefs.setString('username', _username!);
         });
       } else {
         _showSnackBar("Impossible de récupérer le nom d'utilisateur.");
@@ -121,6 +123,167 @@ class _ProfilState extends State<Profil> {
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _ChangePassword() async {
+    final email = prefs.getString("user_email");
+
+    if (email == null) {
+      _showSnackBar("Email utilisateur introuvable.");
+      return;
+    }
+
+    final oldPasswordController = TextEditingController();
+    final newPasswordController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Changer le mot de passe'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: oldPasswordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Ancien mot de passe',
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: newPasswordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Nouveau mot de passe',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Annuler'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final oldPassword = oldPasswordController.text.trim();
+                final newPassword = newPasswordController.text.trim();
+
+                if (oldPassword.isEmpty || newPassword.isEmpty) {
+                  _showSnackBar("Les deux champs sont requis.");
+                  return;
+                }
+
+                final url = Uri.parse(
+                    'https://nexuschat.derickexm.be/users/change_password');
+
+                try {
+                  final response = await http.post(
+                    url,
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode({
+                      "email": email,
+                      "old_password": oldPassword,
+                      "new_password": newPassword,
+                    }),
+                  );
+
+                  if (response.statusCode == 200) {
+                    _showSnackBar("Mot de passe mis à jour !");
+                    Navigator.of(context).pop(); // Fermer le popup
+                  } else {
+                    final responseData = jsonDecode(response.body);
+                    _showSnackBar(responseData["error"] ?? "Erreur inconnue.");
+                  }
+                } catch (e) {
+                  _showSnackBar("Erreur lors de la connexion à l'API.");
+                }
+              },
+              child: const Text('Confirmer'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteAccount() async {
+    final username = prefs.getString('username');
+    final email = prefs.getString('user_email');
+    final passwordController = TextEditingController();
+
+    if (username == null || email == null) {
+      _showSnackBar("Impossible de récupérer les infos du compte.");
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Confirmation'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                  "Pour supprimer votre compte, entrez votre mot de passe :"),
+              const SizedBox(height: 10),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: "Mot de passe"),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Annuler"),
+            ),
+            TextButton(
+              onPressed: () async {
+                final password = passwordController.text.trim();
+                if (password.isEmpty) {
+                  _showSnackBar("Le mot de passe est requis.");
+                  return;
+                }
+
+                final url = Uri.parse(
+                    'https://nexuschat.derickexm.be/users/delete_user');
+                try {
+                  final response = await http.post(
+                    url,
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode({
+                      "username": username,
+                      "email": email,
+                      "password": password,
+                    }),
+                  );
+
+                  if (response.statusCode == 200) {
+                    _showSnackBar("Compte supprimé avec succès.");
+                    await prefs.clear();
+
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (context) => const Login()),
+                    );
+                  } else {
+                    _showSnackBar("Échec de la suppression du compte.");
+                  }
+                } catch (e) {
+                  _showSnackBar("Erreur de connexion à l'API.");
+                }
+              },
+              child: const Text("Supprimer"),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -227,16 +390,17 @@ class _ProfilState extends State<Profil> {
                   ),
                 ),
                 const SizedBox(height: 15),
-                ElevatedButton(
-                  onPressed: () {
-                    if (_userEmail != null) {
-                      sendVerificationEmail(context, _userEmail!);
-                    } else {
-                      _showSnackBar("Aucun email trouvé pour l'utilisateur.");
-                    }
-                  },
-                  child: const Text("Envoyer l'email de vérification"),
-                ),
+                if (!_isEmailVerified)
+                  ElevatedButton(
+                    onPressed: () {
+                      if (_userEmail != null) {
+                        sendVerificationEmail(context, _userEmail!);
+                      } else {
+                        _showSnackBar("Aucun email trouvé pour l'utilisateur.");
+                      }
+                    },
+                    child: const Text("Envoyer l'email de vérification"),
+                  ),
                 const SizedBox(height: 20),
                 const Text("Statut",
                     style:
@@ -289,6 +453,24 @@ class _ProfilState extends State<Profil> {
                     );
                   },
                   child: const Text('Changer nom d\'utilisateur'),
+                ),
+                SizedBox(
+                  height: 10,
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  onPressed: _ChangePassword,
+                  child: const Text("Changer le mot de passe",
+                      style: TextStyle(color: Colors.white)),
+                ),
+                SizedBox(
+                  height: 10,
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  onPressed: _deleteAccount,
+                  child: const Text("Supprimer le compte",
+                      style: TextStyle(color: Colors.white)),
                 ),
               ],
             ),
