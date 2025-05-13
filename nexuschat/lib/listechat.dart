@@ -271,6 +271,12 @@ class Listechatstate extends State<Listechat> {
                                   style: const TextStyle(
                                       fontWeight: FontWeight.bold),
                                 ),
+                                // trailing: IconButton(
+                                //   icon: Icon(Icons.delete),
+                                //   color: Colors.red,
+                                //   onPressed: () =>
+                                //       _supprimerConversation(destinataire),
+                                // ),
                                 //
                                 // subtitle: Column(
                                 //   crossAxisAlignment: CrossAxisAlignment.start,

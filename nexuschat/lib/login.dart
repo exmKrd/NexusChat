@@ -78,7 +78,6 @@ class Login extends StatelessWidget {
         if (response.statusCode == 200) {
           print("Connexion réussie");
 
-          // Stocker l'email de l'utilisateur
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('user_email', email);
 
@@ -99,8 +98,7 @@ class Login extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Container(
-            width:
-                400, // Définition d'une largeur fixe pour un meilleur affichage
+            width: 400,
             padding: const EdgeInsets.all(16.0),
             decoration: BoxDecoration(
               border: Border.all(color: Colors.black, width: 2),
@@ -159,6 +157,13 @@ class Login extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: () {
                       FocusManager.instance.primaryFocus?.unfocus();
+
+                      if (email.text.isEmpty || passwd.text.isEmpty) {
+                        _showErrorDialog(
+                            context, "Veuillez remplir tous les champs.");
+                        return;
+                      }
+
                       print("Email saisi : ${email.text}");
                       print("Mot de passe : ${passwd.text}");
                       checkCredentials(email.text, passwd.text);

@@ -14,10 +14,12 @@ class Contacts extends StatefulWidget {
 class _ContactsState extends State<Contacts>
     with SingleTickerProviderStateMixin {
   List<dynamic> _contacts = [];
+  List<dynamic> _filteredContacts = [];
   List<dynamic> _demandes = [];
   List<dynamic> _users = [];
   List<dynamic> _filteredUsers = [];
   TextEditingController _searchController = TextEditingController();
+  TextEditingController _contactSearchController = TextEditingController();
 
   String? _userEmail;
   String? currentUser;
@@ -28,6 +30,7 @@ class _ContactsState extends State<Contacts>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _initUser();
+    _contactSearchController.addListener(_filterContacts);
   }
 
   Future<void> _initUser() async {
@@ -66,7 +69,10 @@ class _ContactsState extends State<Contacts>
       );
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        setState(() => _contacts = data);
+        setState(() {
+          _contacts = data;
+          _filteredContacts = data;
+        });
       } else {
         print("Erreur chargement contacts: ${response.statusCode}");
       }
@@ -115,6 +121,15 @@ class _ContactsState extends State<Contacts>
     setState(() {
       _filteredUsers = _users
           .where((user) => user['username'].toLowerCase().contains(query))
+          .toList();
+    });
+  }
+
+  void _filterContacts() {
+    final query = _contactSearchController.text.toLowerCase();
+    setState(() {
+      _filteredContacts = _contacts
+          .where((contact) => contact['contacts'].toLowerCase().contains(query))
           .toList();
     });
   }
@@ -202,6 +217,47 @@ class _ContactsState extends State<Contacts>
     }
   }
 
+  Future<void> _supprimerContact(String destinataire) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Confirmer la suppression"),
+        content: Text(
+            "Voulez-vous vraiment supprimer $destinataire de vos contacts ?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text("Annuler"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text("Supprimer"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final response = await http.post(
+        Uri.parse('https://nexuschat.derickexm.be/contacts/supprimer_contact'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"owner": currentUser, "contact": destinataire}),
+      );
+      if (response.statusCode == 200) {
+        await _loadContacts();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Contact $destinataire supprimé")),
+        );
+        print("Status: ${response.statusCode}");
+        print("Body: ${response.body}");
+      }
+    } catch (e) {
+      print("Erreur : $e");
+    }
+  }
+
   Future<String> _getEtatRelation(String target) async {
     final response = await http.get(
       Uri.parse(
@@ -234,27 +290,53 @@ class _ContactsState extends State<Contacts>
         children: [
           _contacts.isEmpty
               ? Center(child: Text("Aucun contact"))
-              : ListView.builder(
-                  itemCount: _contacts.length,
-                  itemBuilder: (context, index) {
-                    final user = _contacts[index]['contacts'];
-                    return Card(
-                      child: ListTile(
-                        title: Text(user),
-                        leading: Icon(Icons.person),
-                        trailing: ElevatedButton(
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  ChatScreen(usernameExpediteur: user),
-                            ),
-                          ),
-                          child: Text("Chat"),
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: TextField(
+                        controller: _contactSearchController,
+                        decoration: InputDecoration(
+                          labelText: "Rechercher dans mes contacts...",
+                          prefixIcon: Icon(Icons.search),
+                          border: OutlineInputBorder(),
                         ),
                       ),
-                    );
-                  },
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _filteredContacts.length,
+                        itemBuilder: (context, index) {
+                          final user = _filteredContacts[index]['contacts'];
+                          return Card(
+                            child: ListTile(
+                              title: Text(user),
+                              leading: Icon(Icons.person),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  ElevatedButton(
+                                    onPressed: () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => ChatScreen(
+                                            usernameExpediteur: user),
+                                      ),
+                                    ),
+                                    child: Text("Chat"),
+                                  ),
+                                  IconButton(
+                                    icon: Icon(Icons.delete),
+                                    onPressed: () => _supprimerContact(user),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
           _demandes.isEmpty
               ? Center(child: Text("Aucune demande"))

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_giphy_picker/giphy_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -19,7 +20,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
 
-  List<Map<String, String>> messages = [];
+  List<Map<String, dynamic>> messages = [];
   String? expediteur;
   late String destinataire;
   int idConversation = 0;
@@ -133,6 +134,45 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<Map<String, String>> _chiffrerMessage(String message) async {
+    final uri =
+        Uri.parse('https://nexuschat.derickexm.be/messages/crypt_message/')
+            .replace(queryParameters: {'message': message});
+    final response = await http.post(uri);
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      print("Chiffrement → encrypted_message: ${data['encrypted_message']}");
+      print("Chiffrement → key: ${data['key']}");
+      return {
+        'encrypted_message': data['encrypted_message'] ?? message,
+        'key': data['key'] ?? ''
+      };
+    } else {
+      print("Erreur chiffrement: ${response.body}");
+      return {'encrypted_message': message, 'key': ''};
+    }
+  }
+
+  Future<String> _dechiffrerMessage(String encryptedMessage, String key) async {
+    final uri =
+        Uri.parse('https://nexuschat.derickexm.be/messages/uncrypt_message/');
+    final response = await http.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'encrypted_message': encryptedMessage,
+        'key': key,
+      }),
+    );
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return data['decrypted_message'] ?? encryptedMessage;
+    } else {
+      print("Erreur déchiffrement: ${response.body}");
+      return encryptedMessage;
+    }
+  }
+
   Future<void> _fetchMessages() async {
     if (idConversation <= 0) return;
     try {
@@ -144,15 +184,24 @@ class _ChatScreenState extends State<ChatScreen> {
         final jsonResponse = jsonDecode(response.body);
         if (jsonResponse.containsKey('messages')) {
           final List<dynamic> messagesList = jsonResponse['messages'];
+          final decryptedMessages =
+              await Future.wait(messagesList.map((msg) async {
+            final isMe = msg['expediteur'].toString() == expediteur;
+
+            final encrypted = msg['messages'].toString();
+            final cle = msg['key']?.toString() ?? '';
+            final texte = await _dechiffrerMessage(encrypted, cle);
+            return {
+              'sender': msg['expediteur'].toString(),
+              'text': texte,
+              'encrypted': msg['messages'].toString(),
+              'timestamp': msg['sent_at'].toString(),
+              'key': msg['key']?.toString() ?? '',
+              'type': msg['type'] ?? 'text'
+            };
+          }));
           setState(() {
-            messages = messagesList.map((msg) {
-              bool isMe = msg['expediteur'].toString() == expediteur;
-              return {
-                'sender': msg['expediteur'].toString(),
-                'text': msg['messages'].toString(),
-                'timestamp': msg['sent_at'].toString(),
-              };
-            }).toList();
+            messages = decryptedMessages;
             _isInitialLoading = false;
           });
           _scrollToBottom();
@@ -160,6 +209,31 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       print('Erreur fetchMessages: $e');
+    }
+  }
+
+  Future<void> _supprimerMessage(Map<String, dynamic> message) async {
+    try {
+      final uri = Uri.parse(
+          'https://nexuschat.derickexm.be/messages/messages/delete_message/');
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'expediteur': expediteur,
+          'id_conversation': idConversation,
+          'message': message['encrypted'],
+          'key': message['key'],
+        }),
+      );
+      if (response.statusCode == 200) {
+        print("✅ Message supprimé");
+        _fetchMessages(); // refresh
+      } else {
+        print("❌ Erreur suppression: ${response.body}");
+      }
+    } catch (e) {
+      print("❌ Erreur _supprimerMessage: $e");
     }
   }
 
@@ -178,6 +252,7 @@ class _ChatScreenState extends State<ChatScreen> {
           setState(() {
             expediteur = jsonResponse['username'];
           });
+          print("📦 Chargement expediteur : $expediteur");
         }
       }
     } catch (e) {
@@ -194,20 +269,40 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> sendMessage(String message) async {
+    print("🧪 Appel à sendMessage()...");
+    print("🔍 expediteur: $expediteur");
     if (expediteur == null || message.trim().isEmpty) return;
 
     final now = DateTime.now();
 
+    final cryptoData = await _chiffrerMessage(message.trim());
+    print("Résultat chiffrement : $cryptoData");
+    final encryptedMessage = cryptoData['encrypted_message'] ?? '';
+    final key = cryptoData['key'] ?? '';
+    // Ajout du texte en clair
+    final plainText = _controller.text.trim();
+    if (key == null || key.isEmpty) {
+      print('❌ Clé de chiffrement manquante. Message non envoyé.');
+      return;
+    }
+
     setState(() {
-      messages.add({
-        'sender': expediteur!,
-        'text': message.trim(),
-        'timestamp': now.toIso8601String(),
-      });
+      messages = List<Map<String, dynamic>>.from(messages)
+        ..add({
+          'sender': expediteur ?? '',
+          'text': plainText,
+          'encrypted': encryptedMessage,
+          'timestamp': now.toIso8601String(),
+          'key': key,
+          'type': 'text'
+        });
     });
     _controller.clear();
     _updateButtonState();
     _scrollToBottom();
+
+    print("✉️ Envoi du message chiffré : $encryptedMessage");
+    print("🔑 Clé : $key");
 
     try {
       final response = await http.post(
@@ -216,9 +311,12 @@ class _ChatScreenState extends State<ChatScreen> {
         body: jsonEncode({
           'expediteur': expediteur,
           'destinataire': destinataire,
-          'message': message.trim(),
-          'sent_at': now.toIso8601String(),
+          'message': encryptedMessage,
+          // Correction : horodatage en heure locale (Belgique)
+          'timestamp': DateTime.now().toIso8601String(),
           'id_conversation': idConversation,
+          // Correction : forcer 'key' non vide
+          'key': key.isNotEmpty ? key : 'test'
         }),
       );
       if (response.statusCode == 200) {
@@ -239,6 +337,66 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _sendGif(String gifUrl) async {
+    if (expediteur == null || gifUrl.isEmpty) return;
+    print('📤 Préparation à l’envoi du GIF :');
+    print('  ↪️ URL : $gifUrl');
+
+    final nowUtcIso = DateTime.now().toIso8601String();
+    // Désactivation du chiffrement pour les GIFs
+    final encryptedMessage = gifUrl;
+    final key = 'test';
+    print('  🔐 Encrypted : $encryptedMessage');
+    print('  🔑 Key : $key');
+    print('  💬 ID conversation : $idConversation');
+    setState(() {
+      messages = List<Map<String, dynamic>>.from(messages)
+        ..add({
+          'sender': expediteur ?? '',
+          'text': gifUrl,
+          'encrypted': encryptedMessage,
+          'timestamp': nowUtcIso,
+          'key': key,
+          'type': 'gif'
+        });
+    });
+    _scrollToBottom();
+
+    final body = jsonEncode({
+      'expediteur': expediteur,
+      'destinataire': destinataire,
+      'message': encryptedMessage,
+      'timestamp': nowUtcIso,
+      'id_conversation': idConversation,
+      'key': key,
+      'type': 'gif'
+    });
+    print("📦 Corps envoyé à l’API :");
+    print("  expediteur     : ${expediteur}");
+    print("  destinataire   : ${destinataire}");
+    print("  message        : $encryptedMessage");
+    print("  key            : $key");
+    print("  timestamp      : $nowUtcIso");
+    print("  id_conversation: $idConversation");
+    print("  type           : gif");
+    print("🔒 Longueur message : ${encryptedMessage.length}");
+    try {
+      final response = await http.post(
+        Uri.parse('https://nexuschat.derickexm.be/messages/send_message/'),
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      );
+
+      if (response.statusCode != 200) {
+        print('Erreur envoi GIF : ${response.body}');
+      } else {
+        print('✅ GIF envoyé avec succès.');
+      }
+    } catch (e) {
+      print('Erreur réseau envoi GIF : $e');
+    }
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -255,8 +413,20 @@ class _ChatScreenState extends State<ChatScreen> {
     print('Sélectionner une photo');
   }
 
-  void _selectGif() {
-    print('Sélectionner un GIF');
+  Future<void> _selectGif() async {
+    GiphyLocale? fr;
+    fr ??= GiphyLocale.fromContext(context);
+
+    final config = GiphyUIConfig(
+      apiKey: 'qG62ngUKbr66l2jVPcDGulJW1RbZy5xI',
+    );
+    final result =
+        await showGiphyPicker(context, config, locale: GiphyLocale.fr);
+
+    if (result != null) {
+      print("GIF sélectionné : ${result.url}");
+      _sendGif(result.url);
+    }
   }
 
   @override
@@ -308,19 +478,64 @@ class _ChatScreenState extends State<ChatScreen> {
                                 color: Colors.grey[700],
                               ),
                             ),
-                            Container(
-                              margin: const EdgeInsets.only(top: 2),
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: isMe ? Colors.orange : Colors.grey[300],
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                message['text'] ?? '',
-                                style: TextStyle(
-                                  color: isMe ? Colors.white : Colors.black,
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: GestureDetector(
+                                    onLongPress: isMe
+                                        ? () {
+                                            showDialog(
+                                              context: context,
+                                              builder: (BuildContext context) {
+                                                return AlertDialog(
+                                                  title: Text(
+                                                      "Supprimer le message ?"),
+                                                  actions: [
+                                                    TextButton(
+                                                      child: Text("Annuler"),
+                                                      onPressed: () =>
+                                                          Navigator.of(context)
+                                                              .pop(),
+                                                    ),
+                                                    TextButton(
+                                                      child: Text("Supprimer"),
+                                                      onPressed: () {
+                                                        Navigator.of(context)
+                                                            .pop();
+                                                        _supprimerMessage(
+                                                            message);
+                                                      },
+                                                    ),
+                                                  ],
+                                                );
+                                              },
+                                            );
+                                          }
+                                        : null,
+                                    child: Container(
+                                      margin: const EdgeInsets.only(top: 2),
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: isMe
+                                            ? Colors.orange
+                                            : Colors.grey[300],
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: message['type'] == 'gif'
+                                          ? Image.network(message['text'] ?? '')
+                                          : Text(
+                                              message['text'] ?? '',
+                                              style: TextStyle(
+                                                color: isMe
+                                                    ? Colors.white
+                                                    : Colors.black,
+                                              ),
+                                            ),
+                                    ),
+                                  ),
                                 ),
-                              ),
+                              ],
                             ),
                             if (formattedTime.isNotEmpty)
                               Padding(
@@ -339,51 +554,80 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 Padding(
                   padding: const EdgeInsets.all(8.0),
-                  child: Row(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _controller,
-                          focusNode: _focusNode,
-                          style: TextStyle(fontSize: 16),
-                          cursorColor: Colors.orange,
-                          decoration: InputDecoration(
-                            hintText: 'Entrez votre message...',
-                            border: OutlineInputBorder(),
-                          ),
-                          minLines: 1,
-                          maxLines: 5,
-                          keyboardType: TextInputType.multiline,
-                          textInputAction: TextInputAction.newline,
-                          onChanged: (text) => _updateButtonState(),
-                          onEditingComplete: () {},
-                          inputFormatters: [
-                            _EnterKeyFormatter(
-                              onEnter: () {
-                                if (_controller.text.trim().isNotEmpty) {
-                                  sendMessage(_controller.text);
-                                  _controller
-                                      .clear(); // 👈 Ajout explicite du clear ici
-                                }
-                              },
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _controller,
+                              focusNode: _focusNode,
+                              style: TextStyle(fontSize: 16),
+                              cursorColor: Colors.orange,
+                              decoration: InputDecoration(
+                                hintText: 'Entrez votre message...',
+                                border: OutlineInputBorder(),
+                              ),
+                              minLines: 1,
+                              maxLines: 5,
+                              keyboardType: TextInputType.multiline,
+                              textInputAction: TextInputAction.newline,
+                              onChanged: (text) => _updateButtonState(),
+                              onEditingComplete: () {},
+                              inputFormatters: [
+                                _EnterKeyFormatter(
+                                  onEnter: () {
+                                    if (_controller.text.trim().isNotEmpty) {
+                                      sendMessage(_controller.text);
+                                      _controller
+                                          .clear(); // 👈 Ajout explicite du clear ici
+                                    }
+                                  },
+                                ),
+                              ],
                             ),
-                          ],
+                          ),
+                          SizedBox(width: 8),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade100, // plus doux
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: IconButton(
+                              icon: Icon(Icons.gif_box,
+                                  color: Colors.deepOrange, size: 28),
+                              onPressed: _selectGif,
+                              tooltip: 'GIF',
+                            ),
+                          ),
+                          SizedBox(width: 5),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.orange,
+                              shape: BoxShape.circle,
+                            ),
+                            child: IconButton(
+                              icon: Icon(Icons.send, color: Colors.black),
+                              onPressed: _isButtonEnabled
+                                  ? () {
+                                      sendMessage(_controller.text);
+                                      _controller.clear();
+                                      _updateButtonState();
+                                    }
+                                  : null,
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                        ],
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4, top: 2),
+                        child: Text(
+                          "🔒 Messages chiffrés de bout en bout",
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
                         ),
                       ),
-                      SizedBox(width: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.orange,
-                          shape: BoxShape.circle,
-                        ),
-                        child: IconButton(
-                          icon: Icon(Icons.send, color: Colors.black),
-                          onPressed: _isButtonEnabled
-                              ? () => sendMessage(_controller.text)
-                              : null,
-                        ),
-                      ),
-                      SizedBox(width: 8),
                     ],
                   ),
                 ),

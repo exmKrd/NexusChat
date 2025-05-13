@@ -42,6 +42,11 @@ class Inscription extends StatelessWidget {
   Future<void> _API_inscription(BuildContext context) async {
     const String apiUrl = "https://nexuschat.derickexm.be/users/create_user";
 
+    if (username.text.isEmpty || email.text.isEmpty || passwd.text.isEmpty) {
+      _showSnackBar(context, "Veuillez remplir tous les champs.");
+      return;
+    }
+
     try {
       final response = await http.post(
         Uri.parse(apiUrl),
