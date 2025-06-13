@@ -402,15 +402,6 @@ class _ProfilState extends State<Profil> {
                     child: const Text("Envoyer l'email de vérification"),
                   ),
                 const SizedBox(height: 20),
-                const Text("Statut",
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
-                const SizedBox(height: 3),
-                Text(
-                  "Dernière activité : Non spécifié",
-                  style: const TextStyle(fontSize: 20),
-                ),
-                const SizedBox(height: 10),
                 ElevatedButton(
                   onPressed: () {
                     showDialog(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nexuschat/notifications.dart';
 import 'package:nexuschat/profil.dart';
 import 'settings.dart';
 import 'listechat.dart';
@@ -24,6 +25,7 @@ class _MenuState extends State<Menu> {
 
     _widgetOptions = <Widget>[
       Listechat(),
+      Notif(),
       Setting(),
     ];
   }
@@ -111,6 +113,10 @@ class _MenuState extends State<Menu> {
           BottomNavigationBarItem(
             icon: Icon(Icons.chat),
             label: "Chat",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.notifications),
+            label: "Notifications",
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.settings),

@@ -106,9 +106,11 @@ class _ContactsState extends State<Contacts>
       );
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        final users = data['users'];
+        users.shuffle();
         setState(() {
-          _users = data['users'];
-          _filteredUsers = _users;
+          _users = users;
+          _filteredUsers = users.length > 3 ? users.take(3).toList() : users;
         });
       }
     } catch (e) {
@@ -119,9 +121,13 @@ class _ContactsState extends State<Contacts>
   void _filterUsers() {
     final query = _searchController.text.toLowerCase();
     setState(() {
-      _filteredUsers = _users
-          .where((user) => user['username'].toLowerCase().contains(query))
-          .toList();
+      if (query.isEmpty) {
+        _filteredUsers = [];
+      } else {
+        _filteredUsers = _users
+            .where((user) => user['username'].toLowerCase().contains(query))
+            .toList();
+      }
     });
   }
 
@@ -132,6 +138,32 @@ class _ContactsState extends State<Contacts>
           .where((contact) => contact['contacts'].toLowerCase().contains(query))
           .toList();
     });
+  }
+
+  Future<void> _sendnotification(
+      String destinataire, String messageText) async {
+    if (destinataire.isEmpty || currentUser == null) return;
+
+    final url =
+        Uri.parse("https://nexuschat.derickexm.be/users/send_notifications");
+    final body = jsonEncode({
+      'destinataire': destinataire,
+      'type': 'text',
+      'contenu': messageText,
+      'owner': currentUser
+    });
+
+    try {
+      final response = await http.post(url,
+          headers: {'Content-Type': 'application/json'}, body: body);
+      if (response.statusCode == 200) {
+        print("✅ Notification envoyée.");
+      } else {
+        print("❌ Erreur envoi notification: ${response.body}");
+      }
+    } catch (e) {
+      print("❌ Exception envoi notification: $e");
+    }
   }
 
   Future<void> _envoyerDemandeContact(String destinataire) async {
@@ -173,6 +205,8 @@ class _ContactsState extends State<Contacts>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Demande envoyée à $destinataire")),
         );
+        await _sendnotification(
+            destinataire, "$currentUser vous a envoyé une demande de contact.");
         await _loadDemandes();
       }
     } catch (e) {
@@ -380,54 +414,72 @@ class _ContactsState extends State<Contacts>
               Expanded(
                 child: _filteredUsers.isEmpty
                     ? Center(child: Text("Aucun utilisateur trouvé"))
-                    : ListView.builder(
-                        itemCount: _filteredUsers.length,
-                        itemBuilder: (context, index) {
-                          final user = _filteredUsers[index]['username'];
-                          if (user == currentUser) return SizedBox();
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_searchController.text.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16.0, vertical: 8.0),
+                              child: Text(
+                                "Personnes que tu pourrais connaître",
+                                style: TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          Expanded(
+                            child: ListView.builder(
+                              itemCount: _filteredUsers.length,
+                              itemBuilder: (context, index) {
+                                final user = _filteredUsers[index]['username'];
+                                if (user == currentUser) return SizedBox();
 
-                          return FutureBuilder<String>(
-                            future: _getEtatRelation(user),
-                            builder: (context, snapshot) {
-                              String? etat = snapshot.data;
+                                return FutureBuilder<String>(
+                                  future: _getEtatRelation(user),
+                                  builder: (context, snapshot) {
+                                    String? etat = snapshot.data;
 
-                              if (!snapshot.hasData) {
-                                return ListTile(
-                                  title: Text(user),
-                                  subtitle: Text("Chargement..."),
+                                    if (!snapshot.hasData) {
+                                      return ListTile(
+                                        title: Text(user),
+                                        subtitle: Text("Chargement..."),
+                                      );
+                                    }
+
+                                    String label = "";
+                                    VoidCallback? action;
+
+                                    if (etat == "aucune_relation") {
+                                      label = "Envoyer demande";
+                                      action =
+                                          () => _envoyerDemandeContact(user);
+                                    } else if (etat == "pending_envoyee" ||
+                                        etat == "pending_recue") {
+                                      label = "Demande en attente";
+                                      action = null;
+                                    } else if (etat == "ami") {
+                                      return SizedBox(); // cacher les amis
+                                    } else {
+                                      label = "Erreur";
+                                      action = null;
+                                    }
+
+                                    return Card(
+                                      child: ListTile(
+                                        title: Text(user),
+                                        leading: Icon(Icons.person_outline),
+                                        trailing: ElevatedButton(
+                                          onPressed: action,
+                                          child: Text(label),
+                                        ),
+                                      ),
+                                    );
+                                  },
                                 );
-                              }
-
-                              String label = "";
-                              VoidCallback? action;
-
-                              if (etat == "aucune_relation") {
-                                label = "Envoyer demande";
-                                action = () => _envoyerDemandeContact(user);
-                              } else if (etat == "pending_envoyee" ||
-                                  etat == "pending_recue") {
-                                label = "Demande en attente";
-                                action = null;
-                              } else if (etat == "ami") {
-                                return SizedBox(); // cacher les amis
-                              } else {
-                                label = "Erreur";
-                                action = null;
-                              }
-
-                              return Card(
-                                child: ListTile(
-                                  title: Text(user),
-                                  leading: Icon(Icons.person_outline),
-                                  trailing: ElevatedButton(
-                                    onPressed: action,
-                                    child: Text(label),
-                                  ),
-                                ),
-                              );
-                            },
-                          );
-                        },
+                              },
+                            ),
+                          ),
+                        ],
                       ),
               ),
             ],

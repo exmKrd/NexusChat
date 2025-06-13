@@ -1,10 +1,16 @@
 import 'dart:async';
+import 'dart:io' as io;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_giphy_picker/giphy_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:intl/intl.dart';
 
 class ChatScreen extends StatefulWidget {
   final String usernameExpediteur;
@@ -27,6 +33,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isButtonEnabled = false;
   late Timer _pollingTimer;
   bool _isInitialLoading = true;
+  bool _showScrollToBottom = false;
 
   @override
   void initState() {
@@ -35,6 +42,19 @@ class _ChatScreenState extends State<ChatScreen> {
     _loadExpediteur();
     _controller.addListener(_updateButtonState);
     _startPolling();
+    _scrollController.addListener(() {
+      final maxScroll = _scrollController.position.maxScrollExtent;
+      final currentScroll = _scrollController.offset;
+      final threshold = 100.0;
+
+      final shouldShow = (maxScroll - currentScroll) > threshold;
+
+      if (shouldShow != _showScrollToBottom) {
+        setState(() {
+          _showScrollToBottom = shouldShow;
+        });
+      }
+    });
   }
 
   void _startPolling() {
@@ -155,18 +175,26 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<String> _dechiffrerMessage(String encryptedMessage, String key) async {
     final uri =
-        Uri.parse('https://nexuschat.derickexm.be/messages/uncrypt_message/');
+        Uri.parse('https://nexuschat.derickexm.be/messages/uncrypt_messages/');
     final response = await http.post(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'encrypted_message': encryptedMessage,
-        'key': key,
+        "messages": [
+          {"encrypted_message": encryptedMessage, "key": key}
+        ]
       }),
     );
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      return data['decrypted_message'] ?? encryptedMessage;
+      if (data['results'] != null &&
+          data['results'] is List &&
+          data['results'].isNotEmpty) {
+        final first = data['results'][0];
+        return first['decrypted_message'] ?? encryptedMessage;
+      } else {
+        return encryptedMessage;
+      }
     } else {
       print("Erreur déchiffrement: ${response.body}");
       return encryptedMessage;
@@ -184,24 +212,51 @@ class _ChatScreenState extends State<ChatScreen> {
         final jsonResponse = jsonDecode(response.body);
         if (jsonResponse.containsKey('messages')) {
           final List<dynamic> messagesList = jsonResponse['messages'];
-          final decryptedMessages =
-              await Future.wait(messagesList.map((msg) async {
-            final isMe = msg['expediteur'].toString() == expediteur;
 
-            final encrypted = msg['messages'].toString();
-            final cle = msg['key']?.toString() ?? '';
-            final texte = await _dechiffrerMessage(encrypted, cle);
-            return {
+          final batch = messagesList
+              .map((msg) => {
+                    "encrypted_message": msg['messages'].toString(),
+                    "key": msg['key']?.toString() ?? ''
+                  })
+              .toList();
+
+          final decryptUri = Uri.parse(
+              'https://nexuschat.derickexm.be/messages/uncrypt_messages/');
+          final decryptResponse = await http.post(
+            decryptUri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({"messages": batch}),
+          );
+
+          List<String> textesDecryptes = [];
+
+          if (decryptResponse.statusCode == 200) {
+            final decryptedData = jsonDecode(decryptResponse.body);
+            if (decryptedData['results'] is List) {
+              textesDecryptes = List<String>.from(decryptedData['results']
+                  .map((item) => item['decrypted_message'] ?? ''));
+            }
+          }
+
+          final List<Map<String, dynamic>> finalMessages = [];
+          for (int i = 0; i < messagesList.length; i++) {
+            final msg = messagesList[i];
+            final text = i < textesDecryptes.length
+                ? textesDecryptes[i]
+                : msg['messages'].toString();
+            finalMessages.add({
               'sender': msg['expediteur'].toString(),
-              'text': texte,
+              'text': text,
               'encrypted': msg['messages'].toString(),
-              'timestamp': msg['sent_at'].toString(),
+              'sent_at': msg['sent_at'].toString(),
               'key': msg['key']?.toString() ?? '',
-              'type': msg['type'] ?? 'text'
-            };
-          }));
+              'type': msg['type'] ?? 'text',
+            });
+            print(msg['sent_at'].toString());
+          }
+
           setState(() {
-            messages = decryptedMessages;
+            messages = finalMessages;
             _isInitialLoading = false;
           });
           _scrollToBottom();
@@ -227,13 +282,38 @@ class _ChatScreenState extends State<ChatScreen> {
         }),
       );
       if (response.statusCode == 200) {
-        print("✅ Message supprimé");
+        print(" Message supprimé");
         _fetchMessages(); // refresh
       } else {
-        print("❌ Erreur suppression: ${response.body}");
+        print("Erreur suppression: ${response.body}");
       }
     } catch (e) {
-      print("❌ Erreur _supprimerMessage: $e");
+      print(" Erreur _supprimerMessage: $e");
+    }
+  }
+
+  Future<void> _sendnotification(String messageText) async {
+    if (destinataire.isEmpty) return;
+
+    final url =
+        Uri.parse("https://nexuschat.derickexm.be/users/send_notifications");
+    final body = jsonEncode({
+      'destinataire': destinataire,
+      'type': 'text',
+      'contenu': messageText,
+      'owner': expediteur
+    });
+
+    try {
+      final response = await http.post(url,
+          headers: {'Content-Type': 'application/json'}, body: body);
+      if (response.statusCode == 200) {
+        print("✅ Notification envoyée.");
+      } else {
+        print("❌ Erreur envoi notification: ${response.body}");
+      }
+    } catch (e) {
+      print("❌ Exception envoi notification: $e");
     }
   }
 
@@ -273,26 +353,31 @@ class _ChatScreenState extends State<ChatScreen> {
     print("🔍 expediteur: $expediteur");
     if (expediteur == null || message.trim().isEmpty) return;
 
-    final now = DateTime.now();
-
     final cryptoData = await _chiffrerMessage(message.trim());
-    print("Résultat chiffrement : $cryptoData");
     final encryptedMessage = cryptoData['encrypted_message'] ?? '';
     final key = cryptoData['key'] ?? '';
-    // Ajout du texte en clair
     final plainText = _controller.text.trim();
-    if (key == null || key.isEmpty) {
+
+    // --- MODIFIED LINE FOR TIMESTAMP ---
+    // Get current local time, then convert to UTC, then add 2 hours (for CEST / UTC+2)
+    // This ensures the time sent is what CEST time would be for this moment.
+    final nowCestTime = DateTime.now().toUtc().add(Duration(hours: 2));
+    final nowCestIsoFormatted =
+        DateFormat("yyyy-MM-dd HH:mm:ss").format(nowCestTime);
+
+    if (key.isEmpty) {
       print('❌ Clé de chiffrement manquante. Message non envoyé.');
       return;
     }
 
+    // Affichage local temporaire (sera remplacé par le polling)
     setState(() {
       messages = List<Map<String, dynamic>>.from(messages)
         ..add({
           'sender': expediteur ?? '',
           'text': plainText,
           'encrypted': encryptedMessage,
-          'timestamp': now.toIso8601String(),
+          'timestamp': 'En cours...', // Temporaire, will be updated by polling
           'key': key,
           'type': 'text'
         });
@@ -303,6 +388,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     print("✉️ Envoi du message chiffré : $encryptedMessage");
     print("🔑 Clé : $key");
+    print(
+        "⏰ Timestamp envoyé à l'API (CEST): $nowCestIsoFormatted"); // Add this debug print
 
     try {
       final response = await http.post(
@@ -312,52 +399,148 @@ class _ChatScreenState extends State<ChatScreen> {
           'expediteur': expediteur,
           'destinataire': destinataire,
           'message': encryptedMessage,
-          // Correction : horodatage en heure locale (Belgique)
-          'timestamp': DateTime.now().toIso8601String(),
           'id_conversation': idConversation,
-          // Correction : forcer 'key' non vide
-          'key': key.isNotEmpty ? key : 'test'
+          'key': key,
+          'type': 'text',
+          'timestamp':
+              nowCestIsoFormatted, // --- USE THE CEST FORMATTED STRING ---
         }),
       );
+
+      print("📡 Status Code: ${response.statusCode}");
+      print("📡 Response: ${response.body}");
+
       if (response.statusCode == 200) {
+        print("✅ Message envoyé avec succès");
+
+        await Future.delayed(Duration(milliseconds: 500));
+        await _fetchMessages();
+
         final jsonResponse = jsonDecode(response.body);
         if (jsonResponse.containsKey('reply')) {
           setState(() {
             messages.add({
               'sender': destinataire,
               'text': jsonResponse['reply'],
-              'timestamp': DateTime.now().toIso8601String(),
+              'timestamp': 'À l\'instant',
+              'type': 'text'
             });
           });
           _scrollToBottom();
         }
+        await _sendnotification(message.trim());
+      } else {
+        print('❌ Erreur HTTP ${response.statusCode}: ${response.body}');
+        setState(() {
+          messages.removeLast();
+        });
       }
     } catch (e) {
-      print('Erreur sendMessage: $e');
+      print('❌ Erreur exception sendMessage: $e');
+      setState(() {
+        messages.removeLast();
+      });
     }
   }
 
+// 🎭 Fonction _sendGif simplifiée
   Future<void> _sendGif(String gifUrl) async {
     if (expediteur == null || gifUrl.isEmpty) return;
-    print('📤 Préparation à l’envoi du GIF :');
-    print('  ↪️ URL : $gifUrl');
 
-    final nowUtcIso = DateTime.now().toIso8601String();
-    // Désactivation du chiffrement pour les GIFs
-    final encryptedMessage = gifUrl;
-    final key = 'test';
-    print('  🔐 Encrypted : $encryptedMessage');
-    print('  🔑 Key : $key');
-    print('  💬 ID conversation : $idConversation');
+    print('📤 Préparation à l\'envoi du GIF : $gifUrl');
+    final nowCestTime = DateTime.now().toUtc().add(Duration(hours: 2));
+    final nowCestIsoFormatted =
+        DateFormat("yyyy-MM-dd HH:mm:ss").format(nowCestTime);
+
+    final cryptoData = await _chiffrerMessage(gifUrl);
+    final encryptedMessage = cryptoData['encrypted_message'] ?? gifUrl;
+    final key = cryptoData['key'] ?? 'test';
+
+    // Affichage local temporaire
     setState(() {
       messages = List<Map<String, dynamic>>.from(messages)
         ..add({
           'sender': expediteur ?? '',
           'text': gifUrl,
           'encrypted': encryptedMessage,
-          'timestamp': nowUtcIso,
+          'sent_at': 'En cours...',
           'key': key,
           'type': 'gif'
+        });
+    });
+    _scrollToBottom();
+
+    try {
+      final response = await http.post(
+        Uri.parse('https://nexuschat.derickexm.be/messages/send_message/'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'expediteur': expediteur,
+          'destinataire': destinataire,
+          'message': encryptedMessage,
+          'id_conversation': idConversation,
+          'key': key,
+          'type': 'gif',
+          'timestamp': nowCestIsoFormatted, // --- INCLUDE THIS IN THE BODY ---
+        }),
+      );
+
+      print("📡 GIF Status: ${response.statusCode}");
+
+      if (response.statusCode == 200) {
+        print('✅ GIF envoyé avec succès.');
+        // Refresh pour récupérer le vrai timestamp
+        await Future.delayed(Duration(milliseconds: 500));
+        await _fetchMessages();
+      } else {
+        print('❌ Erreur envoi GIF : ${response.body}');
+        setState(() {
+          messages.removeLast();
+        });
+      }
+    } catch (e) {
+      print('❌ Erreur réseau envoi GIF : $e');
+      setState(() {
+        messages.removeLast();
+      });
+    }
+  }
+
+  void _scrollToBottom({bool force = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        final maxScroll = _scrollController.position.maxScrollExtent;
+        final currentScroll = _scrollController.offset;
+        final threshold = 100.0;
+
+        if (force || (maxScroll - currentScroll) < threshold) {
+          _scrollController.animateTo(
+            maxScroll,
+            duration: Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      }
+    });
+  }
+
+  Future<void> _sendFile(String fileUrl) async {
+    if (expediteur == null || fileUrl.isEmpty) return;
+
+    final nowUtcIso = DateTime.now().toIso8601String();
+    final cryptoData = await _chiffrerMessage(fileUrl);
+    final encryptedMessage = cryptoData['encrypted_message'] ?? fileUrl;
+    final key = cryptoData['key'] ?? 'test';
+
+    setState(() {
+      messages = List<Map<String, dynamic>>.from(messages)
+        ..add({
+          'sender': expediteur ?? '',
+          'text': fileUrl,
+          'encrypted': encryptedMessage,
+          'timestamp': nowUtcIso,
+          'key': key,
+          'type': 'file'
         });
     });
     _scrollToBottom();
@@ -366,20 +549,12 @@ class _ChatScreenState extends State<ChatScreen> {
       'expediteur': expediteur,
       'destinataire': destinataire,
       'message': encryptedMessage,
-      'timestamp': nowUtcIso,
+      // 'timestamp': nowUtcIso, // removed
       'id_conversation': idConversation,
       'key': key,
-      'type': 'gif'
+      'type': 'file'
     });
-    print("📦 Corps envoyé à l’API :");
-    print("  expediteur     : ${expediteur}");
-    print("  destinataire   : ${destinataire}");
-    print("  message        : $encryptedMessage");
-    print("  key            : $key");
-    print("  timestamp      : $nowUtcIso");
-    print("  id_conversation: $idConversation");
-    print("  type           : gif");
-    print("🔒 Longueur message : ${encryptedMessage.length}");
+
     try {
       final response = await http.post(
         Uri.parse('https://nexuschat.derickexm.be/messages/send_message/'),
@@ -388,30 +563,16 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       if (response.statusCode != 200) {
-        print('Erreur envoi GIF : ${response.body}');
+        print('Erreur envoi fichier : ${response.body}');
       } else {
-        print('✅ GIF envoyé avec succès.');
+        print('✅ Fichier envoyé avec succès.');
       }
     } catch (e) {
-      print('Erreur réseau envoi GIF : $e');
+      print('Erreur réseau envoi fichier : $e');
     }
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
-  }
-
-  void _selectPhoto() {
-    print('Sélectionner une photo');
-  }
+  ///
 
   Future<void> _selectGif() async {
     GiphyLocale? fr;
@@ -441,198 +602,256 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         title: Text(destinataire),
       ),
-      body: _isInitialLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final message = messages[index];
-                      final isMe = message['sender'] == expediteur;
-
-                      // Formatage de l'heure
-                      final time =
-                          DateTime.tryParse(message['timestamp'] ?? '');
-                      final formattedTime = time != null
-                          ? "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}"
-                          : '';
-
-                      return Container(
-                        alignment:
-                            isMe ? Alignment.centerRight : Alignment.centerLeft,
-                        margin: const EdgeInsets.symmetric(
-                            vertical: 4, horizontal: 8),
-                        child: Column(
-                          crossAxisAlignment: isMe
-                              ? CrossAxisAlignment.end
-                              : CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              message['sender'] ?? '',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                                color: Colors.grey[700],
-                              ),
-                            ),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
+      body: Stack(
+        children: [
+          _isInitialLoading
+              ? const Center(child: CircularProgressIndicator())
+              : Column(
+                  children: [
+                    Expanded(
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) {
+                          final message = messages[index];
+                          final isMe = message['sender'] == expediteur;
+                          return Container(
+                            alignment: isMe
+                                ? Alignment.centerRight
+                                : Alignment.centerLeft,
+                            margin: const EdgeInsets.symmetric(
+                                vertical: 4, horizontal: 8),
+                            child: Column(
+                              crossAxisAlignment: isMe
+                                  ? CrossAxisAlignment.end
+                                  : CrossAxisAlignment.start,
                               children: [
-                                Flexible(
-                                  child: GestureDetector(
-                                    onLongPress: isMe
-                                        ? () {
-                                            showDialog(
-                                              context: context,
-                                              builder: (BuildContext context) {
-                                                return AlertDialog(
-                                                  title: Text(
-                                                      "Supprimer le message ?"),
-                                                  actions: [
-                                                    TextButton(
-                                                      child: Text("Annuler"),
-                                                      onPressed: () =>
-                                                          Navigator.of(context)
-                                                              .pop(),
-                                                    ),
-                                                    TextButton(
-                                                      child: Text("Supprimer"),
-                                                      onPressed: () {
-                                                        Navigator.of(context)
-                                                            .pop();
-                                                        _supprimerMessage(
-                                                            message);
-                                                      },
-                                                    ),
-                                                  ],
+                                Text(
+                                  message['sender'] ?? '',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                    color: Colors.grey[700],
+                                  ),
+                                ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Flexible(
+                                      child: GestureDetector(
+                                        onLongPress: isMe
+                                            ? () {
+                                                showDialog(
+                                                  context: context,
+                                                  builder:
+                                                      (BuildContext context) {
+                                                    return AlertDialog(
+                                                      title: Text(
+                                                          "Supprimer le message ?"),
+                                                      actions: [
+                                                        TextButton(
+                                                          child:
+                                                              Text("Annuler"),
+                                                          onPressed: () =>
+                                                              Navigator.of(
+                                                                      context)
+                                                                  .pop(),
+                                                        ),
+                                                        TextButton(
+                                                          child:
+                                                              Text("Supprimer"),
+                                                          onPressed: () {
+                                                            Navigator.of(
+                                                                    context)
+                                                                .pop();
+                                                            _supprimerMessage(
+                                                                message);
+                                                          },
+                                                        ),
+                                                      ],
+                                                    );
+                                                  },
                                                 );
-                                              },
-                                            );
-                                          }
-                                        : null,
-                                    child: Container(
-                                      margin: const EdgeInsets.only(top: 2),
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: isMe
-                                            ? Colors.orange
-                                            : Colors.grey[300],
-                                        borderRadius: BorderRadius.circular(10),
+                                              }
+                                            : null,
+                                        child: Container(
+                                          margin: const EdgeInsets.only(top: 2),
+                                          padding: const EdgeInsets.all(10),
+                                          decoration: BoxDecoration(
+                                            color: isMe
+                                                ? Colors.orange
+                                                : Colors.grey[300],
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                          ),
+                                          child: message['type'] == 'gif'
+                                              ? Image.network(
+                                                  message['text'] ?? '',
+                                                  errorBuilder: (context, error,
+                                                      stackTrace) {
+                                                  return Text(
+                                                      "Erreur de chargement du GIF");
+                                                })
+                                              : message['text']
+                                                      .toString()
+                                                      .startsWith('http')
+                                                  ? GestureDetector(
+                                                      onTap: () => launchUrl(
+                                                          Uri.parse(
+                                                              message['text'])),
+                                                      child: Text(
+                                                        '📎 Fichier joint',
+                                                        style: TextStyle(
+                                                          decoration:
+                                                              TextDecoration
+                                                                  .underline,
+                                                          color:
+                                                              Colors.blueAccent,
+                                                        ),
+                                                      ),
+                                                    )
+                                                  : Text(
+                                                      message['owner'] != null
+                                                          ? "Message de ${message['owner']}"
+                                                          : (message['text'] ??
+                                                              ''),
+                                                      style: TextStyle(
+                                                        color: isMe
+                                                            ? Colors.white
+                                                            : Colors.black,
+                                                      ),
+                                                    ),
+                                        ),
                                       ),
-                                      child: message['type'] == 'gif'
-                                          ? Image.network(message['text'] ?? '')
-                                          : Text(
-                                              message['text'] ?? '',
-                                              style: TextStyle(
-                                                color: isMe
-                                                    ? Colors.white
-                                                    : Colors.black,
-                                              ),
-                                            ),
                                     ),
+                                  ],
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Builder(
+                                    builder: (context) {
+                                      final rawDateStr = message['sent_at'] ??
+                                          message['timestamp'];
+                                      DateTime? parsedDate;
+                                      try {
+                                        parsedDate =
+                                            DateTime.tryParse(rawDateStr ?? '');
+                                      } catch (_) {}
+                                      final display = parsedDate != null
+                                          ? DateFormat("d MMMM yyyy à HH:mm",
+                                                  "fr_FR")
+                                              .format(parsedDate)
+                                          : '';
+                                      return Text(
+                                        display,
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: Colors.grey[600]),
+                                      );
+                                    },
                                   ),
                                 ),
                               ],
                             ),
-                            if (formattedTime.isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  formattedTime,
-                                  style: TextStyle(
-                                      fontSize: 10, color: Colors.grey[600]),
-                                ),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
+                          );
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _controller,
-                              focusNode: _focusNode,
-                              style: TextStyle(fontSize: 16),
-                              cursorColor: Colors.orange,
-                              decoration: InputDecoration(
-                                hintText: 'Entrez votre message...',
-                                border: OutlineInputBorder(),
-                              ),
-                              minLines: 1,
-                              maxLines: 5,
-                              keyboardType: TextInputType.multiline,
-                              textInputAction: TextInputAction.newline,
-                              onChanged: (text) => _updateButtonState(),
-                              onEditingComplete: () {},
-                              inputFormatters: [
-                                _EnterKeyFormatter(
-                                  onEnter: () {
-                                    if (_controller.text.trim().isNotEmpty) {
-                                      sendMessage(_controller.text);
-                                      _controller
-                                          .clear(); // 👈 Ajout explicite du clear ici
-                                    }
-                                  },
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _controller,
+                                  focusNode: _focusNode,
+                                  style: TextStyle(fontSize: 16),
+                                  cursorColor: Colors.orange,
+                                  decoration: InputDecoration(
+                                    hintText: 'Entrez votre message...',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  minLines: 1,
+                                  maxLines: 5,
+                                  keyboardType: TextInputType.multiline,
+                                  textInputAction: TextInputAction.newline,
+                                  onChanged: (text) => _updateButtonState(),
+                                  onEditingComplete: () {},
+                                  inputFormatters: [
+                                    _EnterKeyFormatter(
+                                      onEnter: () {
+                                        if (_controller.text
+                                            .trim()
+                                            .isNotEmpty) {
+                                          sendMessage(_controller.text);
+                                          _controller.clear();
+                                        }
+                                      },
+                                    ),
+                                  ],
                                 ),
-                              ],
+                              ),
+                              SizedBox(width: 5),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.shade100,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: IconButton(
+                                  icon: Icon(Icons.gif_box,
+                                      color: Colors.deepOrange, size: 28),
+                                  onPressed: _selectGif,
+                                  tooltip: 'GIF',
+                                ),
+                              ),
+                              SizedBox(width: 5),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.orange,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: IconButton(
+                                  icon: Icon(Icons.send, color: Colors.black),
+                                  onPressed: _isButtonEnabled
+                                      ? () {
+                                          sendMessage(_controller.text);
+                                          _controller.clear();
+                                          _updateButtonState();
+                                        }
+                                      : null,
+                                ),
+                              ),
+                            ],
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4, top: 2),
+                            child: Text(
+                              "🔒 Messages chiffrés de bout en bout",
+                              style:
+                                  TextStyle(fontSize: 12, color: Colors.grey),
                             ),
                           ),
-                          SizedBox(width: 8),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.orange.shade100, // plus doux
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: IconButton(
-                              icon: Icon(Icons.gif_box,
-                                  color: Colors.deepOrange, size: 28),
-                              onPressed: _selectGif,
-                              tooltip: 'GIF',
-                            ),
-                          ),
-                          SizedBox(width: 5),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.orange,
-                              shape: BoxShape.circle,
-                            ),
-                            child: IconButton(
-                              icon: Icon(Icons.send, color: Colors.black),
-                              onPressed: _isButtonEnabled
-                                  ? () {
-                                      sendMessage(_controller.text);
-                                      _controller.clear();
-                                      _updateButtonState();
-                                    }
-                                  : null,
-                            ),
-                          ),
-                          SizedBox(width: 8),
                         ],
                       ),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 4, top: 2),
-                        child: Text(
-                          "🔒 Messages chiffrés de bout en bout",
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
+          if (_showScrollToBottom)
+            Positioned(
+              bottom: 100,
+              right: 16,
+              child: FloatingActionButton(
+                mini: true,
+                backgroundColor: Colors.orange,
+                child: Icon(Icons.arrow_downward),
+                onPressed: () => _scrollToBottom(force: true),
+              ),
             ),
+        ],
+      ),
     );
   }
 }

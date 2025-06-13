@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:nexuschat/forgotpassword.dart';
 import 'package:nexuschat/inscription.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'menu.dart';
@@ -58,6 +59,42 @@ class Login extends StatelessWidget {
     }
 
     Future<void> checkCredentials(String email, String password) async {
+      final url =
+          Uri.parse('https://nexuschat.derickexm.be/users/check_credentials');
+
+      final body = jsonEncode({
+        'email': email,
+        'password': password,
+      });
+
+      try {
+        final response = await http.post(
+          url,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: body,
+        );
+
+        if (response.statusCode == 200) {
+          print("Connexion réussie");
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('user_email', email);
+
+          Navigator.pushReplacement(
+              context, MaterialPageRoute(builder: (context) => Menu()));
+          await sendAttemptLogin(email);
+        } else {
+          _showErrorDialog(
+              context, "Nom d'utilisateur ou mot de passe incorrect");
+        }
+      } catch (e) {
+        _showErrorDialog(context, "Impossible de se connecter à l'API");
+      }
+    }
+
+    Future<void> _ForgotPassword(String email, String password) async {
       final url =
           Uri.parse('https://nexuschat.derickexm.be/users/check_credentials');
 
@@ -182,6 +219,19 @@ class Login extends StatelessWidget {
                               builder: (context) => Inscription()));
                     },
                     child: const Text("S'inscrire"),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    // Tu pourras plus tard rediriger vers une page dédiée
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => ForgotPasswordScreen()));
+                  },
+                  child: const Text(
+                    "Mot de passe oublié ?",
+                    style: TextStyle(color: Colors.red),
                   ),
                 ),
               ],
