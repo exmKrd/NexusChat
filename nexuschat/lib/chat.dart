@@ -283,7 +283,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (response.statusCode == 200) {
         print(" Message supprimé");
-        _fetchMessages(); // refresh
+        _fetchMessages(); 
       } else {
         print("Erreur suppression: ${response.body}");
       }
@@ -358,9 +358,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final key = cryptoData['key'] ?? '';
     final plainText = _controller.text.trim();
 
-    // --- MODIFIED LINE FOR TIMESTAMP ---
-    // Get current local time, then convert to UTC, then add 2 hours (for CEST / UTC+2)
-    // This ensures the time sent is what CEST time would be for this moment.
+  
     final nowCestTime = DateTime.now().toUtc().add(Duration(hours: 2));
     final nowCestIsoFormatted =
         DateFormat("yyyy-MM-dd HH:mm:ss").format(nowCestTime);
@@ -370,14 +368,14 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // Affichage local temporaire (sera remplacé par le polling)
+  
     setState(() {
       messages = List<Map<String, dynamic>>.from(messages)
         ..add({
           'sender': expediteur ?? '',
           'text': plainText,
           'encrypted': encryptedMessage,
-          'timestamp': 'En cours...', // Temporaire, will be updated by polling
+          'timestamp': 'En cours...', 
           'key': key,
           'type': 'text'
         });
@@ -389,7 +387,7 @@ class _ChatScreenState extends State<ChatScreen> {
     print("✉️ Envoi du message chiffré : $encryptedMessage");
     print("🔑 Clé : $key");
     print(
-        "⏰ Timestamp envoyé à l'API (CEST): $nowCestIsoFormatted"); // Add this debug print
+        "⏰ Timestamp envoyé à l'API (CEST): $nowCestIsoFormatted"); /
 
     try {
       final response = await http.post(
@@ -403,7 +401,7 @@ class _ChatScreenState extends State<ChatScreen> {
           'key': key,
           'type': 'text',
           'timestamp':
-              nowCestIsoFormatted, // --- USE THE CEST FORMATTED STRING ---
+              nowCestIsoFormatted,
         }),
       );
 
@@ -443,7 +441,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-// 🎭 Fonction _sendGif simplifiée
+
   Future<void> _sendGif(String gifUrl) async {
     if (expediteur == null || gifUrl.isEmpty) return;
 
@@ -456,7 +454,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final encryptedMessage = cryptoData['encrypted_message'] ?? gifUrl;
     final key = cryptoData['key'] ?? 'test';
 
-    // Affichage local temporaire
+  
     setState(() {
       messages = List<Map<String, dynamic>>.from(messages)
         ..add({
@@ -481,7 +479,7 @@ class _ChatScreenState extends State<ChatScreen> {
           'id_conversation': idConversation,
           'key': key,
           'type': 'gif',
-          'timestamp': nowCestIsoFormatted, // --- INCLUDE THIS IN THE BODY ---
+          'timestamp': nowCestIsoFormatted, 
         }),
       );
 
@@ -489,7 +487,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (response.statusCode == 200) {
         print('✅ GIF envoyé avec succès.');
-        // Refresh pour récupérer le vrai timestamp
+    
         await Future.delayed(Duration(milliseconds: 500));
         await _fetchMessages();
       } else {
@@ -549,7 +547,6 @@ class _ChatScreenState extends State<ChatScreen> {
       'expediteur': expediteur,
       'destinataire': destinataire,
       'message': encryptedMessage,
-      // 'timestamp': nowUtcIso, // removed
       'id_conversation': idConversation,
       'key': key,
       'type': 'file'
@@ -856,7 +853,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-// ✅ Formatter : Enter = envoi / Shift+Enter = saut de ligne
+
 class _EnterKeyFormatter extends TextInputFormatter {
   final VoidCallback onEnter;
 
@@ -872,7 +869,7 @@ class _EnterKeyFormatter extends TextInputFormatter {
         !RawKeyboard.instance.keysPressed
             .contains(LogicalKeyboardKey.shiftRight)) {
       onEnter();
-      return const TextEditingValue(text: ''); // vide le champ après envoi
+      return const TextEditingValue(text: ''); 
     }
     return newValue;
   }
